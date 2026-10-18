@@ -1,41 +1,64 @@
-// AWS Lambda (Node.js 20 ומעלה) + Function URL
+// AWS Lambda (Node.js 22) + Function URL
 // מערכת טלפונית לימות המשיח: הקשה 1 = דלת חתם סופר, הקשה 2 = דלת אתר רבקה
 //
 // משתני סביבה (Environment Variables) להגדיר בלמדה:
-//   MIKVEH_BASE      https://prod.xn--8dbba8a7b.com   (הדומיין של מקווה.com בכתיב punycode)
-//   SYSTEM_ID        2171
-//   MIKVEH_USER      שם המשתמש
+//   MIKVEH_USER      שם המשתמש במערכת מקווה.com
 //   MIKVEH_PASS      הסיסמה
+//   SYSTEM_ID        2171
 //   SECRET           מחרוזת אקראית ארוכה (נכנסת גם לקישור api_link בימות)
 //   ALLOWED_PHONES   מספרים מורשים לפתיחה, מופרדים בפסיק (למשל 0501234567,0527654321). ריק = כולם
-//   LOGIN_PATH       נתיב ההתחברות (לוקחים מכלי המפתחים, ראו הסבר)
-//   OPEN_PATH        נתיב פתיחת הדלת, עם {id} במקום מספר המסוף (לוקחים מכלי המפתחים)
+//   MIKVEH_TOKEN     (זמני, לבדיקה בלבד) טוקן שהועתק מהדפדפן. תקף כיממה. כשההתחברות תושלם אין בו צורך
 
-const BASE = process.env.MIKVEH_BASE || 'https://prod.xn--8dbba8a7b.com';
-const LOGIN_PATH = process.env.LOGIN_PATH || '/TODO/login';
-const OPEN_PATH = process.env.OPEN_PATH || '/TODO/terminals/{id}/open';
+const BASE = 'https://prod.xn--8dbba8a7b.com';
+const OPEN_URL = BASE + '/Terminal/TerminalAction';
+const LOGIN_URL = BASE + '/TODO/login'; // לתקן: עדיין חסרה בקשת ההתחברות
 const SECRET = process.env.SECRET || '';
 const ALLOWED = (process.env.ALLOWED_PHONES || '')
   .split(',').map(s => s.trim()).filter(Boolean);
 
-// מספרי המסופים כפי שמופיעים ברשימה: (1) אתר רבקה, (2) חתם סופר
+// הנתונים של שתי הדלתות, כפי שנשלחים מהאתר בלחיצה על "פתיחת דלת פעם אחת"
+// אם מתברר שהדלתות הפוכות, מחליפים בין הערכים של 1 ו-2
 const DOORS = {
-  '1': { name: 'חתם סופר', terminalId: process.env.TERMINAL_CHATAM_SOFER || '2' },
-  '2': { name: 'אתר רבקה', terminalId: process.env.TERMINAL_ATERET_RIVKA || '1' },
+  '1': {
+    name: 'חתם סופר',
+    terminalId: 'd3f11940-3075-4de4-beaf-f4210ff2f14f',
+    targetId: '6C4B9024BFE7',
+  },
+  '2': {
+    name: 'אתר רבקה',
+    terminalId: '3289ef11-cf0a-47d6-8264-d1940028e877',
+    targetId: '98FA9B102524',
+  },
 };
 
 const MENU = 'read=t-לפתיחת דלת חתם סופר הקישו 1 לפתיחת דלת אתר רבקה הקישו 2=Door,no,1,1,7,No';
 
 // הטוקן נשמר בזיכרון בין שיחות כל עוד הלמדה "חמה"
 let token = null;
-let tokenTime = 0;
+let tokenExp = 0;
 
-async function login() {
-  if (token && Date.now() - tokenTime < 20 * 60 * 1000) return token;
-  // לתקן: להתאים את גוף הבקשה למה שהאתר באמת שולח בהתחברות
-  const res = await fetch(BASE + LOGIN_PATH, {
+// קורא את זמן התפוגה מתוך הטוקן עצמו (JWT)
+function jwtExp(t) {
+  try {
+    return JSON.parse(Buffer.from(t.split('.')[1], 'base64url').toString()).exp * 1000;
+  } catch { return 0; }
+}
+
+async function getToken() {
+  // שימוש בטוקן קיים אם הוא עוד בתוקף לפחות 5 דקות
+  if (token && Date.now() < tokenExp - 5 * 60 * 1000) return token;
+
+  // מצב זמני: טוקן ידני מהדפדפן
+  if (process.env.MIKVEH_TOKEN && !process.env.MIKVEH_PASS) {
+    token = process.env.MIKVEH_TOKEN;
+    tokenExp = jwtExp(token);
+    return token;
+  }
+
+  // לתקן: להתאים את הכתובת וגוף הבקשה לבקשת ההתחברות האמיתית של האתר
+  const res = await fetch(LOGIN_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({
       systemId: process.env.SYSTEM_ID,
       username: process.env.MIKVEH_USER,
@@ -44,25 +67,34 @@ async function login() {
   });
   if (!res.ok) throw new Error('login failed ' + res.status);
   const data = await res.json().catch(() => ({}));
-  // לתקן: להתאים לשם השדה שבו חוזר הטוקן (או עוגייה)
-  token = data.token || data.access_token || res.headers.get('set-cookie');
-  tokenTime = Date.now();
+  // לתקן: להתאים לשם השדה שבו חוזר הטוקן
+  token = data.token || data.accessToken || data.access_token;
+  if (!token) throw new Error('no token in login response');
+  tokenExp = jwtExp(token) || Date.now() + 60 * 60 * 1000;
   return token;
 }
 
-async function openDoor(terminalId, retry = true) {
-  const t = await login();
-  const res = await fetch(BASE + OPEN_PATH.replace('{id}', terminalId), {
+async function openDoor(door, retry = true) {
+  const t = await getToken();
+  const res = await fetch(OPEN_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      // לתקן: אם האתר משתמש בעוגייה ולא ב-Bearer, לשנות ל: Cookie: t
+      Accept: 'application/json, text/plain, */*',
       Authorization: 'Bearer ' + t,
+      Origin: BASE,
+      Referer: BASE + '/adminUi/',
     },
-    body: '{}',
+    body: JSON.stringify({
+      terminalId: door.terminalId,
+      targetId: door.targetId,
+      actionName: 'openGate',
+      data: '',
+    }),
   });
-  if (res.status === 401 && retry) { token = null; return openDoor(terminalId, false); }
-  if (!res.ok) throw new Error('open failed ' + res.status);
+  // אם הטוקן פג, מתחברים מחדש ומנסים פעם נוספת
+  if (res.status === 401 && retry) { token = null; return openDoor(door, false); }
+  if (!res.ok) throw new Error('open failed ' + res.status + ' ' + (await res.text()).slice(0, 200));
 }
 
 function reply(text) {
@@ -97,7 +129,7 @@ export const handler = async (event) => {
   if (!door) return reply('id_list_message=t-הקשה שגויה&' + MENU);       // הקשה לא חוקית
 
   try {
-    await openDoor(door.terminalId);
+    await openDoor(door);
     console.log('opened', door.name, 'by', phone);
     return reply(`id_list_message=t-הדלת של ${door.name} נפתחה&go_to_folder=hangup`);
   } catch (e) {
