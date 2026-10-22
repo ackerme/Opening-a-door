@@ -12,8 +12,14 @@ const BASE = 'https://prod.xn--8dbba8a7b.com';
 const OPEN_URL = BASE + '/Terminal/TerminalAction';
 const LOGIN_URL = BASE + '/Account';
 const SECRET = process.env.SECRET || '';
+// מנרמל מספר טלפון: משאיר רק ספרות, והופך 972 בהתחלה ל-0
+// כך 058-321-0422, 0583210422, +972583210422 ו-972583210422 נחשבים אותו מספר
+const normPhone = s => {
+  const d = String(s || '').replace(/\D/g, '');
+  return d.startsWith('972') ? '0' + d.slice(3) : d;
+};
 const ALLOWED = (process.env.ALLOWED_PHONES || '')
-  .split(',').map(s => s.trim()).filter(Boolean);
+  .split(/[,;\s]+/).map(normPhone).filter(Boolean);
 
 // הנתונים של שתי הדלתות, כפי שנשלחים מהאתר בלחיצה על "פתיחת דלת פעם אחת"
 // אם מתברר שהדלתות הפוכות, מחליפים בין הערכים של 1 ו-2
@@ -111,14 +117,19 @@ export const handler = async (event) => {
     for (const [k, v] of new URLSearchParams(raw)) p[k] = v;
   }
 
+  // רישום ביומן מה הגיע מימות המשיח (בלי המפתח הסודי), לצורך בדיקת תקלות
+  const { key: _k, ...logged } = p;
+  console.log('request', JSON.stringify(logged));
+
   // בדיקת המפתח הסודי
   if (SECRET && p.key !== SECRET) return { statusCode: 403, body: 'forbidden' };
   // המתקשר ניתק
   if (p.hangup === 'yes') return reply('');
 
   // בדיקה שהמספר המתקשר מורשה
-  const phone = (p.ApiPhone || '').replace(/^\+?972/, '0');
+  const phone = normPhone(p.ApiPhone);
   if (ALLOWED.length && !ALLOWED.includes(phone)) {
+    console.log('blocked phone', phone, 'allowed:', ALLOWED.join(','));
     return reply('id_list_message=t-אין הרשאה לפתיחת הדלת&go_to_folder=hangup');
   }
 
