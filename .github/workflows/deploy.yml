@@ -6,7 +6,7 @@
 #     AWS_ROLE_ARN                              אם GitHub מחובר ל-AWS דרך OIDC
 #     AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY  אם משתמשים במפתחות גישה
 #   הגדרות המערכת:
-#     SECRET, ALLOWED_PHONES, MIKVEH_TOKEN, MIKVEH_USER, MIKVEH_PASS, SYSTEM_ID
+#     SECRET, ALLOWED_PHONES, MIKVEH_USER, MIKVEH_PASS, SYSTEM_ID
 #
 # Variables (לא חובה): AWS_REGION (ברירת מחדל eu-central-1)
 
@@ -55,7 +55,6 @@ jobs:
         env:
           SECRET: ${{ secrets.SECRET }}
           ALLOWED_PHONES: ${{ secrets.ALLOWED_PHONES }}
-          MIKVEH_TOKEN: ${{ secrets.MIKVEH_TOKEN }}
           MIKVEH_USER: ${{ secrets.MIKVEH_USER }}
           MIKVEH_PASS: ${{ secrets.MIKVEH_PASS }}
           SYSTEM_ID: ${{ secrets.SYSTEM_ID }}
@@ -66,11 +65,10 @@ jobs:
           ENV_JSON=$(jq -cn \
             --arg SECRET "$SECRET" \
             --arg ALLOWED_PHONES "$ALLOWED_PHONES" \
-            --arg MIKVEH_TOKEN "$MIKVEH_TOKEN" \
             --arg MIKVEH_USER "$MIKVEH_USER" \
             --arg MIKVEH_PASS "$MIKVEH_PASS" \
             --arg SYSTEM_ID "$SYSTEM_ID" \
-            '{Variables: ({SECRET:$SECRET, ALLOWED_PHONES:$ALLOWED_PHONES, MIKVEH_TOKEN:$MIKVEH_TOKEN, MIKVEH_USER:$MIKVEH_USER, MIKVEH_PASS:$MIKVEH_PASS, SYSTEM_ID:$SYSTEM_ID} | with_entries(select(.value != "")))}')
+            '{Variables: ({SECRET:$SECRET, ALLOWED_PHONES:$ALLOWED_PHONES, MIKVEH_USER:$MIKVEH_USER, MIKVEH_PASS:$MIKVEH_PASS, SYSTEM_ID:$SYSTEM_ID} | with_entries(select(.value != "")))}')
 
           # 1. תפקיד הרשאות לפונקציה
           if ! aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
