@@ -7,11 +7,10 @@
 //   SYSTEM_ID        2171
 //   SECRET           מחרוזת אקראית ארוכה (נכנסת גם לקישור api_link בימות)
 //   ALLOWED_PHONES   מספרים מורשים לפתיחה, מופרדים בפסיק (למשל 0501234567,0527654321). ריק = כולם
-//   MIKVEH_TOKEN     (זמני, לבדיקה בלבד) טוקן שהועתק מהדפדפן. תקף כיממה. כשההתחברות תושלם אין בו צורך
 
 const BASE = 'https://prod.xn--8dbba8a7b.com';
 const OPEN_URL = BASE + '/Terminal/TerminalAction';
-const LOGIN_URL = BASE + '/TODO/login'; // לתקן: עדיין חסרה בקשת ההתחברות
+const LOGIN_URL = BASE + '/Account';
 const SECRET = process.env.SECRET || '';
 const ALLOWED = (process.env.ALLOWED_PHONES || '')
   .split(',').map(s => s.trim()).filter(Boolean);
@@ -48,28 +47,27 @@ async function getToken() {
   // שימוש בטוקן קיים אם הוא עוד בתוקף לפחות 5 דקות
   if (token && Date.now() < tokenExp - 5 * 60 * 1000) return token;
 
-  // מצב זמני: טוקן ידני מהדפדפן
-  if (process.env.MIKVEH_TOKEN && !process.env.MIKVEH_PASS) {
-    token = process.env.MIKVEH_TOKEN;
-    tokenExp = jwtExp(token);
-    return token;
-  }
-
-  // לתקן: להתאים את הכתובת וגוף הבקשה לבקשת ההתחברות האמיתית של האתר
+  // התחברות עם שם משתמש וסיסמה, בדיוק כמו במסך הכניסה של האתר
   const res = await fetch(LOGIN_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/plain, */*',
+      Origin: BASE,
+      Referer: BASE + '/adminUi/',
+    },
     body: JSON.stringify({
-      systemId: process.env.SYSTEM_ID,
       username: process.env.MIKVEH_USER,
       password: process.env.MIKVEH_PASS,
+      externalClubId: process.env.SYSTEM_ID || '2171',
     }),
   });
   if (!res.ok) throw new Error('login failed ' + res.status);
-  const data = await res.json().catch(() => ({}));
-  // לתקן: להתאים לשם השדה שבו חוזר הטוקן
-  token = data.token || data.accessToken || data.access_token;
-  if (!token) throw new Error('no token in login response');
+  const text = await res.text();
+  // מחפשים בתשובה את הטוקן (מחרוזת JWT שמתחילה ב-eyJ), לא משנה באיזה שדה הוא נמצא
+  const m = text.match(/eyJ[\w-]+\.[\w-]+\.[\w-]+/);
+  if (!m) throw new Error('no token in login response: ' + text.slice(0, 200));
+  token = m[0];
   tokenExp = jwtExp(token) || Date.now() + 60 * 60 * 1000;
   return token;
 }
